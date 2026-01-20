@@ -1,0 +1,25 @@
+{
+    "api": {
+        "spotify": {
+            "CLIENT_ID": "",
+            "CLIENT_SECRET": ""
+        },
+        "soundcloud": {
+            "CLIENT_ID": "",
+            "CLIENT_SECRET": ""
+        }
+    },
+    "audio_extensions": [
+        ".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".wma", ".opus", ".aiff", ".alac"
+    ],
+    "platform_priority_order": [
+        "spotify",
+        "deezer",
+        "soundcloud"
+    ],
+    "music_directory": "F:\\Music",
+    "output": {
+        "directory": "output",
+        "filename_format": "{track}. {title}"
+    }
+}

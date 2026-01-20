@@ -1,0 +1,4 @@
+spotipy
+soundcloud-v2
+musicbrainzngs
+SpotiFLAC

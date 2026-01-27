@@ -15,5 +15,5 @@ def download_song(track):
             use_track_numbers=True,
             use_artist_subfolders=True,
             use_album_subfolders=True,
-            loop=None
+            loop=0 # 0*60=0 seconds between retries
         )

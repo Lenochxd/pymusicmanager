@@ -18,8 +18,9 @@
         "soundcloud"
     ],
     "music_directory": "F:\\Music",
+    "temp_directory": "temp",
     "output": {
-        "directory": "output",
-        "filename_format": "{track}. {title}"
+        "base_directory": "output",
+        "filename_format": "{artist}/{album}/{track}. {title}"
     }
 }

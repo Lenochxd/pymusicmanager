@@ -1,4 +1,4 @@
 spotipy
 soundcloud-v2
 musicbrainzngs
-SpotiFLAC
+SpotiFLAC @ git+https://github.com/jelte1/SpotiFLAC-Command-Line-Interface.git

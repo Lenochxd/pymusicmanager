@@ -25,7 +25,11 @@ for f in os.listdir(get_config()['temp_directory']):
     os.remove(os.path.join(get_config()['temp_directory'], f))
 
 def download_song(track):
-    if track['source'].lower() != 'soundcloud' and track.get('url'):
+    if not track.get('url'):
+        print(f"Missing URL for '{track['title']}'") # somehow
+        return
+
+    if track['source'].lower() != 'soundcloud':
         config = get_config()
 
         SpotiFLAC(

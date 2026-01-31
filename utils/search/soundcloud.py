@@ -235,7 +235,7 @@ def get_soundcloud_discography(client_id: str, client_secret: str, user_permalin
                 "title": title,
                 "album": album,
                 "artists": artists_clean,
-                "track_number": None, # SoundCloud does not provide track number directly but could be inferred from playlists
+                "track_number": None, # TODO: SoundCloud does not provide track number directly but could be inferred from playlists
                 "disc_number": None,
                 "duration": duration_ms/1000 if duration_ms else None,
                 "duration_ms": duration_ms,

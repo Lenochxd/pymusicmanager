@@ -95,7 +95,7 @@ def download_song(track):
         ]
         command = " ".join(command)
         print(f"Running command: {command}")
-        result = subprocess.run(command, capture_output=True)
+        result = subprocess.run(command, shell=True, capture_output=True)
         if result.returncode != 0:
             print(f"Error downloading '{track['title']}' from SoundCloud:")
             print(result.stderr.decode(encoding = "ISO-8859-1")) # to avoid decode errors

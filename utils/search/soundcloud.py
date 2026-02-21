@@ -1,6 +1,7 @@
 import requests
 import time
 import random
+import base64
 from typing import Optional, Dict, Any
 
 # Simple in-memory token cache keyed by client_id. Stores dicts with keys:
@@ -10,18 +11,29 @@ _TOKEN_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def soundcloud_authenticate(client_id: str, client_secret: str) -> Dict[str, Any]:
-    """Obtain a new access token from SoundCloud using client credentials.
+    """Obtain a new access token from SoundCloud using client credentials OAuth 2.1 flow.
 
+    Uses the secure endpoint and Basic authentication with Base64-encoded credentials.
+    
     Returns a dict with 'access_token' and 'expires_at' (epoch seconds).
     """
-    token_url = "https://api.soundcloud.com/oauth2/token"
+    token_url = "https://secure.soundcloud.com/oauth/token"
+    
+    # OAuth 2.1 Client Credentials Flow: use Basic authentication
+    credentials = f"{client_id}:{client_secret}"
+    encoded_credentials = base64.b64encode(credentials.encode()).decode()
+    
+    headers = {
+        "Authorization": f"Basic {encoded_credentials}",
+        "accept": "application/json; charset=utf-8",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    
     data = {
-        "client_id": client_id,
-        "client_secret": client_secret,
         "grant_type": "client_credentials",
     }
 
-    resp = requests.post(token_url, data=data, timeout=10)
+    resp = requests.post(token_url, headers=headers, data=data, timeout=10)
     resp.raise_for_status()
     body = resp.json()
     access_token = body.get("access_token")
@@ -56,7 +68,7 @@ def _get_cached_token(client_id: str, client_secret: str) -> str:
 
 
 def _build_auth_headers(access_token: str) -> Dict[str, str]:
-    return {"Authorization": f"OAuth {access_token}"}
+    return {"Authorization": f"Bearer {access_token}"}
 
 
 def _request_with_retry(method: str,

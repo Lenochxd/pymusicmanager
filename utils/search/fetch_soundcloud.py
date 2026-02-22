@@ -3,12 +3,15 @@ import time
 import random
 import base64
 from typing import Optional, Dict, Any
+from utils.config import config
 
 # Simple in-memory token cache keyed by client_id. Stores dicts with keys:
 # - access_token (str)
 # - expires_at (float, epoch seconds)
 _TOKEN_CACHE: Dict[str, Dict[str, Any]] = {}
 
+CLIENT_ID = config.get("api", {}).get("soundcloud", {}).get("CLIENT_ID")
+CLIENT_SECRET = config.get("api", {}).get("soundcloud", {}).get("CLIENT_SECRET")
 
 def soundcloud_authenticate(client_id: str, client_secret: str) -> Dict[str, Any]:
     """Obtain a new access token from SoundCloud using client credentials OAuth 2.1 flow.
@@ -154,42 +157,31 @@ def get_soundcloud_artist(client_id: str, client_secret: str, username: str) -> 
     user_response = _request_with_retry("GET", search_url, client_id, client_secret, params=params)
     return user_response.json()
 
-def get_soundcloud_artist_id(client_id: str, client_secret: str, username: str) -> int:
-    users = get_soundcloud_artist(client_id, client_secret, username)
+def get_soundcloud_artist_id(username: str) -> int:
+    users = get_soundcloud_artist(CLIENT_ID, CLIENT_SECRET, username)
     user = users[0] if users else None
     if user:
         return user["id"]
     
-def get_soundcloud_artist_permalink(client_id: str, client_secret: str, username: str) -> int:
-    users = get_soundcloud_artist(client_id, client_secret, username)
+def get_soundcloud_artist_permalink(username: str) -> int:
+    users = get_soundcloud_artist(CLIENT_ID, CLIENT_SECRET, username)
     user = users[0] if users else None
     if user:
         return user["permalink"]
     
-def get_soundcloud_discography(client_id: str, client_secret: str, user_permalink: str) -> list[str]:
-    """
-    Authenticate with SoundCloud and return all track titles from a user's discography.
-
-    Args:
-        client_id (str): Your SoundCloud app's Client ID.
-        client_secret (str): Your SoundCloud app's Client Secret.
-        user_permalink (str): The user's SoundCloud permalink (e.g., "porter-robinson").
-
-    Returns:
-        list[str]: A list of all track titles from that user.
-    """
-    print(f"Fetching SoundCloud discography for artist '{user_permalink}'...")
+def get_soundcloud_discography(artist_permalink: int, include_feats=False, include_full_album_if_featured=False) -> list[dict]:
+    print(f"Fetching SoundCloud discography for artist '{artist_permalink}'...")
     
     # Step 1 & 2: Resolve permalink to user info using request wrapper
     user_info_url = "https://api.soundcloud.com/resolve"
-    params = {"url": f"https://soundcloud.com/{user_permalink}"}
-    user_response = _request_with_retry("GET", user_info_url, client_id, client_secret, params=params)
+    params = {"url": f"https://soundcloud.com/{artist_permalink}"}
+    user_response = _request_with_retry("GET", user_info_url, CLIENT_ID, CLIENT_SECRET, params=params)
     user_data = user_response.json()
     user_id = user_data.get("id")
-    print(f"User ID for '{user_permalink}': {user_id}")
+    print(f"User ID for '{artist_permalink}': {user_id}")
 
     if not user_id:
-        raise RuntimeError(f"Failed to find user '{user_permalink}' on SoundCloud.")
+        raise RuntimeError(f"Failed to find user '{artist_permalink}' on SoundCloud.")
 
     # Step 3: Fetch all tracks by user ID (paginated)
     tracks_url = f"https://api.soundcloud.com/users/{user_id}/tracks"
@@ -203,9 +195,9 @@ def get_soundcloud_discography(client_id: str, client_secret: str, user_permalin
     while next_url:
         # Send params only on the first request; subsequent pages are followed via next_href.
         if next_url == tracks_url:
-            track_response = _request_with_retry("GET", next_url, client_id, client_secret, params=params)
+            track_response = _request_with_retry("GET", next_url, CLIENT_ID, CLIENT_SECRET, params=params)
         else:
-            track_response = _request_with_retry("GET", next_url, client_id, client_secret)
+            track_response = _request_with_retry("GET", next_url, CLIENT_ID, CLIENT_SECRET)
 
         data = track_response.json()
 
@@ -292,9 +284,9 @@ def get_soundcloud_discography(client_id: str, client_secret: str, user_permalin
     while next_url:
         # Send params only on the first request; subsequent pages are followed via next_href.
         if next_url == playlists_url:
-            playlist_response = _request_with_retry("GET", next_url, client_id, client_secret, params=params)
+            playlist_response = _request_with_retry("GET", next_url, CLIENT_ID, CLIENT_SECRET, params=params)
         else:
-            playlist_response = _request_with_retry("GET", next_url, client_id, client_secret)
+            playlist_response = _request_with_retry("GET", next_url, CLIENT_ID, CLIENT_SECRET)
 
         data = playlist_response.json()
 

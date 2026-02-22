@@ -17,6 +17,14 @@
         "deezer",
         "soundcloud"
     ],
+    "fetch_from": {
+        "spotify": true,
+        "deezer": true,
+        "soundcloud": true
+    },
+    "include_featuring_tracks": true,
+    "include_full_album_if_featured": true,
+    "include_only_missing": true,
     "music_directory": "F:\\Music",
     "temp_directory": "temp",
     "output": {

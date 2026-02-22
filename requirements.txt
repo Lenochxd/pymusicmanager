@@ -3,3 +3,4 @@ soundcloud-v2
 musicbrainzngs
 SpotiFLAC @ git+https://github.com/jelte1/SpotiFLAC-Command-Line-Interface.git
 scdl
+PyQt5 # or PySide6

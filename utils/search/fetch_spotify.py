@@ -68,6 +68,8 @@ def get_spotify_discography(artist_id: str, include_feats=False, include_full_al
                 "provider_id": t.get("id"),               # spotify track id
                 "source": "Spotify"
             })
+    data = {"tracks_found": len(tracks), "albums_collected": len(albums)}
+    print(data)
     return tracks
 
 

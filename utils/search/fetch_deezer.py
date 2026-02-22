@@ -10,17 +10,9 @@ def get_deezer_artist_id(name: str):
 def get_deezer_discography(artist_id: int, include_feats=False, include_full_album_if_featured=False) -> list[dict]:
     print(f"Fetching Deezer discography for artist ID '{artist_id}'...")
     albums = []
-    # fetch all tracks where the artist appears (as main or as a contributor), then collect those albums
-
-    # get artist name for searching contributors as Deezer search works better with names
-    ar = requests.get(f"https://api.deezer.com/artist/{artist_id}")
-    artist_info = ar.json()
-    artist_name = artist_info.get("name", "")
 
     # search tracks where artist is main or a contributor (featuring)
-    query = f'artist:"{artist_name}" OR contributor:"{artist_name}"'
-    url = f"https://api.deezer.com/search?q={quote(query)}&limit=100"
-
+    url = f"https://api.deezer.com/artist/{artist_id}/top?limit=100"
     tracks_found = []
     while url:
         r = requests.get(url)
@@ -76,7 +68,7 @@ def get_deezer_discography(artist_id: int, include_feats=False, include_full_alb
                 else:
                     if artist_id not in artists_ids:
                         if include_full_album_if_featured == False:
-                            print(f"{artist_id} not in {artists_ids} for track '{t.get('title')}', skipping.")
+                            # artist not in contributors for this track, and we're not including full album -> skip
                             continue
                     else:
                         pass  # include full album

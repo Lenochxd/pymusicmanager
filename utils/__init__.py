@@ -5,4 +5,6 @@ from .search.fetch_soundcloud import get_soundcloud_discography, get_soundcloud_
 from .normalize import normalize_title_for_similarity
 from .local_tracks import get_local_tracks, get_missing
 from .compare import title_similarity, title_similar, duration_close, is_match
+from .placeholders import placeholders
+from .sanitize_path import sanitize_path
 from .download import download_song

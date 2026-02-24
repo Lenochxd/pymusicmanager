@@ -74,14 +74,6 @@ class MainWindow(QMainWindow):
         self.status = self.statusBar()
         self.status.showMessage("Ready")
 
-        # Index file path (default: <base_dir>/.pymusic_index.json)
-        idx = self.config.get('output', {}).get('index_file')
-        self.index_file = Path(idx) if idx else (self.base_dir / '.pymusic_index.json')
-
-        # Manual entries (persisted separately). Load before scanning filesystem so reload merges them.
-        self.manual_dict = {}
-        self.load_index()  # populate self.manual_dict if an index file exists
-
         # Initial load (scans filesystem and merges manual entries)
         self.reload_files()
 
@@ -94,14 +86,6 @@ class MainWindow(QMainWindow):
                 file_menu.addAction(choose_dir_action)
                 
                 if DEBUG:
-                    export_action = QAction("Export index...", self)
-                    export_action.triggered.connect(self._export_index)
-                    file_menu.addAction(export_action)
-
-                    import_action = QAction("Import index...", self)
-                    import_action.triggered.connect(self._import_index)
-                    file_menu.addAction(import_action)
-
                     add_entry_action = QAction("Add song entry...", self)
                     add_entry_action.triggered.connect(self._add_song_entry_dialog)
                     file_menu.addAction(add_entry_action)
@@ -187,8 +171,10 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "About", "pymusicdownloader GUI\nBeta")
 
     def _open_download_window(self):
-        self.download_window = DownloadWindow(self)
-        self.download_window.show()
+        dw = DownloadWindow(self)
+        dw.add_song.connect(self.add_song_entry)
+        dw.show()
+        self.download_window = dw
 
     def _choose_directory(self):
         # This is not an output directory but the directory used to check if a song is already downloaded by user
@@ -204,11 +190,23 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-    def reload_files(self):
-        """Refresh from the filesystem but preserve entries marked as 'pinned' or 'phantom' in the in-memory index.
-        Filesystem scan builds a fresh dict which is then merged with manual/phantom entries from self.library_dict.
+    def reload_files(self, path=None):
+        """Refresh from the filesystem but preserve entries marked as 'pinned' in the in-memory index.
+        
+        If ``path`` is ``None`` (the default) the entire library rooted at ``self.base_dir`` is rescanned.
+        When ``path`` is supplied it should refer to a subdirectory *relative* to
+        ``self.base_dir``.  Only that subtree will be scanned on disk;
+        the resulting structure is merged back into ``self.library_dict`` at the
+        appropriate location so callers can trigger a partial refresh without walking the whole tree.
         """
-        files = list(self._list_files(self.base_dir))
+        # decide which directory to scan; _list_files always computes paths
+        # relative to the argument we pass it.
+        if path:
+            scan_root = self.base_dir / Path(path)
+        else:
+            scan_root = self.base_dir
+
+        files = list(self._list_files(scan_root))
 
         # Build a fresh dict from filesystem scan
         def build_dict_from_files(files):
@@ -229,15 +227,16 @@ class MainWindow(QMainWindow):
 
         fs_dict = build_dict_from_files(files)
 
-        # Merge pinned or phantom entries from manual_dict into fs_dict
+        # Merge pinned entries from existing library into the new scan
         def merge_preserved_entries(fs_node, lib_node, path=()):
             if not isinstance(lib_node, dict):
                 return
             # handle files at this level
             lib_files = lib_node.get('__files__', [])
             for lf in lib_files:
-                # If an entry was manually added (exists in manual_dict), treat it as pinned by default
-                should_preserve = bool(lf.get('pinned')) or bool(lf.get('phantom')) or (self._is_entry_in_manual(path, lf))
+                # Keep the entry only if it's explicitly pinned (True boolean)
+                # avoid truthy strings or other deprecated metadata that used to slip through
+                should_preserve = lf.get('pinned') is True
                 if should_preserve:
                     # ensure folder exists in fs_node
                     node = fs_node
@@ -263,14 +262,35 @@ class MainWindow(QMainWindow):
                     continue
                 merge_preserved_entries(fs_node, v, path + (k,))
 
-        try:
-            merge_preserved_entries(fs_dict, self.library_dict)
-        except Exception:
-            # if self.library_dict is empty or malformed, ignore
-            pass
+        if path:
+            # merge only against the existing subtree at ``path``
+            parts = tuple(Path(path).parts)
+            # fetch the node from library_dict; ignore missing intermediate
+            lib_sub = self.library_dict
+            for p in parts:
+                lib_sub = lib_sub.get(p, {}) if isinstance(lib_sub, dict) else {}
+            try:
+                merge_preserved_entries(fs_dict, lib_sub)
+            except Exception:
+                pass
+            # now insert/replace the subtree in master index
+            if parts:
+                parent = self.library_dict
+                for p in parts[:-1]:
+                    parent = parent.setdefault(p, {})
+                parent[parts[-1]] = fs_dict
+            else:
+                # shouldn't happen because path nonempty, but fall back
+                self.library_dict = fs_dict
+        else:
+            try:
+                merge_preserved_entries(fs_dict, self.library_dict)
+            except Exception:
+                # if self.library_dict is empty or malformed, ignore
+                pass
+            self.library_dict = fs_dict
 
         # Replace in-memory index and rebuild GUI from it
-        self.library_dict = fs_dict
         try:
             # rebuild GUI from merged library_dict
             self.dict_to_tree(self.library_dict)
@@ -287,7 +307,11 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        self.status.showMessage(f'Loaded {len(files)} files from "{self.base_dir}"')
+        # show total files and indicate if this was a partial refresh
+        if path:
+            self.status.showMessage(f'Loaded {len(files)} files from "{scan_root}" (subpath "{path}")')
+        else:
+            self.status.showMessage(f'Loaded {len(files)} files from "{self.base_dir}"')
 
     def _list_files(self, base_dir: Path):
         if not base_dir.exists():
@@ -394,40 +418,7 @@ class MainWindow(QMainWindow):
         for key, val in d.items():
             add_node(None, key, val)
 
-    def save_index(self, path=None):
-        """Save only manual entries (self.manual_dict) to the index file.
-        This avoids writing full auto-generated filesystem state to disk.
-        """
-        dest = Path(path) if path else self.index_file
-        try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            with open(dest, 'w', encoding='utf-8') as f:
-                json.dump(self.manual_dict, f, indent=2)
-            self.status.showMessage(f"Saved manual index to {dest}")
-        except Exception as e:
-            QMessageBox.warning(self, "Save index", f"Could not save index: {e}")
-
-    def load_index(self, path=None):
-        """Load manual entries only into self.manual_dict.
-        If the file contains an unexpected structure, ignore it (do not replace manual_dict).
-        """
-        src = Path(path) if path else self.index_file
-        if not src.exists():
-            return
-        try:
-            with open(src, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            # Defensive: ensure loaded data is a dict (the expected manual entries structure)
-            if not isinstance(data, dict):
-                QMessageBox.warning(self, "Load index", f"Ignored index: unexpected format in {src}")
-                return
-            self.manual_dict = data
-            self.status.showMessage(f"Loaded manual index from {src}")
-        except Exception as e:
-            QMessageBox.warning(self, "Load index", f"Could not load index: {e}")
-            return
-
-    def add_song_entry(self, folder_path, song_entry, save=True):
+    def add_song_entry(self, folder_path, song_entry):
         """Add or merge a song entry and reflect it in the GUI and manual index.
 
         Implementation is delegated to small helpers to keep this method concise.
@@ -442,16 +433,15 @@ class MainWindow(QMainWindow):
 
         node = self._ensure_library_node(parts)
 
-        existing = self._find_existing_in_node(node, name, path)
-        if existing:
-            self._merge_existing(existing, song_entry, size, modified, path)
-            meta = existing
-        else:
-            ent = {'name': name, 'path': path, 'size': size, 'modified': modified,
-                   'pinned': bool(song_entry.get('pinned')),
-                   'phantom': bool(song_entry.get('phantom'))}
-            node.setdefault('__files__', []).append(ent)
-            meta = ent
+        # Remove existing entry if metadata has changed (before creating a new one)
+        removed = self._remove_if_changed(node, name, path)
+        
+        # Create new entry
+        ent = {'name': name, 'path': path, 'size': size, 'modified': modified,
+                'pinned': False if removed else bool(song_entry.get('pinned')),
+                'phantom': False if removed else bool(song_entry.get('phantom'))}
+        node.setdefault('__files__', []).append(ent)
+        meta = ent
 
         node['__files__'] = sorted(node.get('__files__', []), key=lambda x: x.get('name', '').lower())
 
@@ -462,9 +452,55 @@ class MainWindow(QMainWindow):
             self._sort_children(parent_item)
         except Exception:
             pass
+        
+        if removed:
+            self.reload_files("/".join(parts))  # refresh the subtree to reflect any metadata changes
+            print(f"Updated existing entry for '{name}' at '{folder_path}' with new metadata.")
 
-        if save:
-            self._persist_manual_entry(parts, meta)
+    def remove_song_entry(self, existing_entry):
+        """Remove an entry from GUI"""
+        name = existing_entry.get('name')
+        path = existing_entry.get('path', '')
+        if not name or not path:
+            return
+
+        # compute relative folder parts w.r.t. base_dir if possible; fall back to
+        # using the raw path components minus the filename
+        try:
+            rel = Path(path).relative_to(self.base_dir)
+        except Exception:
+            rel = Path(path)
+        folder = rel.parent
+        parts = [p for p in folder.parts if p]
+
+        # remove from library_dict without inadvertently creating new nodes
+        node = self.library_dict
+        for p in parts:
+            if not isinstance(node, dict) or p not in node:
+                node = None
+                break
+            node = node[p]
+        if isinstance(node, dict) and '__files__' in node:
+            node['__files__'] = [f for f in node.get('__files__', []) if f.get('name') != name]
+
+        # Remove the corresponding tree item (handle top‑level separately)
+        parent_item = self._ensure_tree_path(parts)
+        try:
+            if parent_item is None:
+                # top-level files
+                for idx in range(self.tree.topLevelItemCount()):
+                    item = self.tree.topLevelItem(idx)
+                    if item.childCount() == 0 and item.text(0) == name:
+                        self.tree.takeTopLevelItem(idx)
+                        break
+            else:
+                for i in range(parent_item.childCount()):
+                    child = parent_item.child(i)
+                    if child.childCount() == 0 and child.text(0) == name:
+                        parent_item.removeChild(child)
+                        break
+        except Exception:
+            pass
 
     # --- Small helpers used by add_song_entry (keeps main logic compact) ---
     def _ensure_library_node(self, parts):
@@ -473,29 +509,23 @@ class MainWindow(QMainWindow):
             node = node.setdefault(p, {})
         return node
 
-    def _find_existing_in_node(self, node, name, path):
+    def _remove_if_changed(self, node, name, path):
+        """
+        Removes the entry from the node if it already exists but has different metadata (size, modified, or path).
+        Returns True if an entry was removed.
+        """
+        # Find despite possible extension variations (e.g. expected .flac downloads .mp3 via sc)
+        def remove_extension(n):
+            return n.rsplit('.', 1)[0]
+        
         for e in node.get('__files__', []):
-            if (e.get('name') == name) or (e.get('path') == path):
-                return e
-        return None
-
-    def _merge_existing(self, existing, song_entry, size, modified, path):
-        changed = False
-        if size and existing.get('size') != size:
-            existing['size'] = size
-            changed = True
-        if modified and existing.get('modified') != modified:
-            existing['modified'] = modified
-            changed = True
-        if path and existing.get('path') != path:
-            existing['path'] = path
-            changed = True
-        if song_entry.get('pinned'):
-            existing['pinned'] = True
-        if song_entry.get('phantom') is not None:
-            existing['phantom'] = song_entry.get('phantom')
-        if changed:
-            self.status.showMessage(f"Merged/updated existing entry '{existing.get('name')}'")
+            if (remove_extension(e.get('name')) == remove_extension(name)) or \
+            (remove_extension(e.get('path')) == remove_extension(remove_extension(path))):
+                print(f"Name: {name}, Path: {path} → Found existing entry '{e.get('name')}' in node with files {[f.get('name') for f in node.get('__files__', [])]}")
+                self.remove_song_entry(e)
+                return True
+        print(f"Name: {name}, Path: {path} → No existing entry found in node with files {[f.get('name') for f in node.get('__files__', [])]}")
+        return False
 
     def _ensure_tree_path(self, parts):
         parent = None
@@ -571,32 +601,6 @@ class MainWindow(QMainWindow):
                 return
         # not found → add under parent
         parent.addChild(_make_item())
-
-    def _persist_manual_entry(self, parts, entry):
-        try:
-            node = self.manual_dict
-            for p in parts:
-                node = node.setdefault(p, {})
-            files = node.setdefault('__files__', [])
-            entry_to_store = entry.copy() if isinstance(entry, dict) else entry
-            entry_to_store.setdefault('pinned', True)
-            if not any((f.get('name') == entry_to_store.get('name') and f.get('path') == entry_to_store.get('path')) for f in files):
-                files.append(entry_to_store)
-            node['__files__'] = sorted(node['__files__'], key=lambda x: x.get('name','').lower())
-            self.save_index()
-        except Exception:
-            pass
-
-    # UI helpers for saving/loading via dialogs
-    def _export_index(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Export index", str(self.index_file), "JSON Files (*.json)")
-        if path:
-            self.save_index(path)
-
-    def _import_index(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Import index", str(self.index_file), "JSON Files (*.json)")
-        if path:
-            self.load_index(path)
 
     def _add_song_entry_dialog(self):
         folder, ok = QInputDialog.getText(self, "Add song entry", "Folder path (relative to base):")
@@ -694,20 +698,6 @@ class MainWindow(QMainWindow):
             child = item.child(i)
             if child.childCount() > 0:
                 self._expand_category(child)
-
-    def _is_entry_in_manual(self, path_tuple, file_entry):
-        """Check if a given file_entry exists in the manual_dict under path_tuple."""
-        node = self.manual_dict
-        for p in path_tuple:
-            if not isinstance(node, dict) or p not in node:
-                return False
-            node = node[p]
-        files = node.get('__files__', []) if isinstance(node, dict) else []
-        for f in files:
-            if f.get('name') == file_entry.get('name') or f.get('path') == file_entry.get('path'):
-                return True
-        return False
-
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -813,6 +803,13 @@ class MainWindow(QMainWindow):
         open_location_action.triggered.connect(lambda: self._open_file_location(openable))
         open_location_action.setEnabled(bool(openable))
         menu.addAction(open_location_action)
+        
+        if DEBUG:
+            # Remove entry (for testing)
+            remove_action = QAction("Remove entry", self)
+            remove_action.triggered.connect(lambda: [self.remove_song_entry({'name': Path(p).name, 'path': p}) for (p, m) in file_paths])
+            remove_action.setEnabled(bool(file_paths))
+            menu.addAction(remove_action)
 
         menu.exec(self.tree.viewport().mapToGlobal(point))
 
@@ -837,4 +834,3 @@ class MainWindow(QMainWindow):
                 os.startfile(str(p))
             except Exception as e:
                 QMessageBox.warning(self, "Open file", f"Could not open file: {e}")
-

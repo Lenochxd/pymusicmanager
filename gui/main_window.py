@@ -74,8 +74,8 @@ class MainWindow(QMainWindow):
         self.status = self.statusBar()
         self.status.showMessage("Ready")
 
-        # Initial load (scans filesystem and merges manual entries)
-        self.reload_files()
+        # Initial load
+        self.reload_files(expand_all=True)
 
         # Add actions to File menu
         file_menu = self.menuBar().actions()[0].menu() if self.menuBar().actions() else None
@@ -190,15 +190,17 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-    def reload_files(self, path=None):
-        """Refresh from the filesystem but preserve entries marked as 'pinned' in the in-memory index.
-        
-        If ``path`` is ``None`` (the default) the entire library rooted at ``self.base_dir`` is rescanned.
-        When ``path`` is supplied it should refer to a subdirectory *relative* to
-        ``self.base_dir``.  Only that subtree will be scanned on disk;
-        the resulting structure is merged back into ``self.library_dict`` at the
-        appropriate location so callers can trigger a partial refresh without walking the whole tree.
+    def reload_files(self, path: str=None, expand_all: bool=False):
         """
+        Refresh from the filesystem but preserve entries marked as 'pinned' in the in-memory index.
+        Args:
+            path (str): The path to refresh (relative to base_dir). If None, refresh entire tree.
+            expand_all (bool): If True, expand all folders after refresh.
+        """
+        # Guard against Qt passing a boolean (from QAction.triggered)
+        if isinstance(path, bool):
+            path = None
+
         # decide which directory to scan; _list_files always computes paths
         # relative to the argument we pass it.
         if path:
@@ -292,12 +294,23 @@ class MainWindow(QMainWindow):
 
         # Replace in-memory index and rebuild GUI from it
         try:
+            # capture existing expansion state unless caller wants everything
+            # expanded unconditionally
+            expanded_paths = None
+            if not expand_all:
+                expanded_paths = self._capture_expanded_paths()
+
             # rebuild GUI from merged library_dict
             self.dict_to_tree(self.library_dict)
             # ensure entire tree sorted
             self._sort_entire_tree()
-            # expand all categories recursively by default
-            self._expand_all_categories()
+
+            if expand_all:
+                # legacy behaviour
+                self._expand_all_categories()
+            elif expanded_paths is not None:
+                # restore whatever the user had open before the reload
+                self._apply_expanded_paths(expanded_paths)
         except Exception as e:
             print("Error rebuilding tree from merged index:", e)
 
@@ -483,7 +496,7 @@ class MainWindow(QMainWindow):
         if isinstance(node, dict) and '__files__' in node:
             node['__files__'] = [f for f in node.get('__files__', []) if f.get('name') != name]
 
-        # Remove the corresponding tree item (handle top‑level separately)
+        # Remove the corresponding tree item (handle top-level separately)
         parent_item = self._ensure_tree_path(parts)
         try:
             if parent_item is None:
@@ -698,6 +711,50 @@ class MainWindow(QMainWindow):
             child = item.child(i)
             if child.childCount() > 0:
                 self._expand_category(child)
+
+    def _capture_expanded_paths(self):
+        """Return a set of paths (as slash-separated strings) representing every
+        folder item that is currently expanded in the tree.
+
+        The path is built by concatenating the text of each ancestor (including
+        the item itself) starting at the top level. This allows us to re-expand
+        the same nodes after the tree is rebuilt.
+        """
+        paths = set()
+
+        def recurse(item, path):
+            current = "/".join(path + (item.text(0),))
+            if item.isExpanded():
+                paths.add(current)
+            for j in range(item.childCount()):
+                child = item.child(j)
+                # only consider categories (folders) not leaf file items
+                if child.childCount() > 0:
+                    recurse(child, path + (item.text(0),))
+
+        root = self.tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            top = root.child(i)
+            recurse(top, ())
+        return paths
+
+    def _apply_expanded_paths(self, paths):
+        """Expand any folder items whose path (slash-separated) is contained in
+        *paths*. Paths not found in the new tree are ignored.
+        """
+        def recurse(item, path):
+            current = "/".join(path + (item.text(0),))
+            if current in paths:
+                item.setExpanded(True)
+            for j in range(item.childCount()):
+                child = item.child(j)
+                if child.childCount() > 0:
+                    recurse(child, path + (item.text(0),))
+
+        root = self.tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            top = root.child(i)
+            recurse(top, ())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

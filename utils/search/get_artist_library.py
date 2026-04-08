@@ -58,7 +58,8 @@ def merge_and_deduplicate(spotify_tracks, deezer_tracks, soundcloud_tracks) -> l
     return merged
 
 def get_artist_library(
-        artist_name,
+        artist_name: str = None,
+        artist_url: str = None,
         include_featuring_tracks=INCLUDE_FEATURING_TRACKS,
         include_full_album_if_featured=INCLUDE_FULL_ALBUMS_IF_FEATURED,
         include_only_missing=INCLUDE_ONLY_MISSING
@@ -69,10 +70,23 @@ def get_artist_library(
     
     print(f"Fetching data for {artist_name}...")
     
+    if artist_name and not artist_url:
+        id_spotify = get_spotify_artist_id(name=artist_name) if FETCH_FROM_SPOTIFY else None
+        id_deezer = get_deezer_artist_id(name=artist_name) if FETCH_FROM_DEEZER else None
+        id_soundcloud = get_soundcloud_artist_permalink(name=artist_name) if FETCH_FROM_SOUNDCLOUD else None
+    elif artist_url:
+        if "open.spotify.com" in artist_url:
+            id_spotify = get_spotify_artist_id(url=artist_url) if FETCH_FROM_SPOTIFY else None
+        
+        # id_deezer = get_deezer_artist_id(url=artist_url) if FETCH_FROM_DEEZER else None
+        # id_soundcloud = get_soundcloud_artist_permalink(url=artist_url) if FETCH_FROM_SOUNDCLOUD else None
+        id_deezer = None
+        id_soundcloud = None
+    
     merged = merge_and_deduplicate(
-        get_spotify_discography(get_spotify_artist_id(artist_name), include_featuring_tracks, include_full_album_if_featured) if FETCH_FROM_SPOTIFY else [],
-        get_deezer_discography(get_deezer_artist_id(artist_name), include_featuring_tracks, include_full_album_if_featured) if FETCH_FROM_DEEZER else [],
-        get_soundcloud_discography(get_soundcloud_artist_permalink(artist_name)) if FETCH_FROM_SOUNDCLOUD else []
+        get_spotify_discography(id_spotify, include_featuring_tracks, include_full_album_if_featured) if FETCH_FROM_SPOTIFY else [],
+        get_deezer_discography(id_deezer, include_featuring_tracks, include_full_album_if_featured) if FETCH_FROM_DEEZER else [],
+        get_soundcloud_discography(id_soundcloud) if FETCH_FROM_SOUNDCLOUD else []
     )
     
     return get_missing(merged, LOCAL_MUSIC_DIR) if include_only_missing else merged

@@ -7,11 +7,17 @@ spotify = Spotify(auth_manager=SpotifyClientCredentials(
     client_secret=config.get("api", {}).get("spotify", {}).get("CLIENT_SECRET")
 ))
 
-def get_spotify_artist_id(name: str):
-    print(f"Searching Spotify for artist '{name}'...")
-    results = spotify.search(q=f"artist:{name}", type="artist", limit=1)
-    artists = results.get("artists", {}).get("items", [])
-    return artists[0]["id"] if artists else None
+def get_spotify_artist_id(name: str=None, url: str=None):
+    if url:
+        print(f"Fetching Spotify artist ID from URL '{url}'...")
+        artist_id = url.split("/")[-1].split("?")[0]
+        return artist_id
+    elif name:
+        print(f"Searching Spotify for artist '{name}'...")
+        results = spotify.search(q=f"artist:{name}", type="artist", limit=1)
+        artists = results.get("artists", {}).get("items", [])
+        return artists[0]["id"] if artists else None
+    return None
 
 def get_spotify_discography(artist_id: str, include_feats=False, include_full_album_if_featured=False) -> list[dict]:
     print(f"Fetching Spotify discography for artist ID '{artist_id}'...")
@@ -74,8 +80,13 @@ def get_spotify_discography(artist_id: str, include_feats=False, include_full_al
 
 
 if __name__ == "__main__":
-    result = get_spotify_discography(input("Enter artist name: "))
+    input_value = input("Enter artist name or URL: ")
+    if "open.spotify.com/artist" in input_value:
+        result = get_spotify_artist_id(url=input_value)
+    else:
+        result = get_spotify_artist_id(name=input_value)
+    
     if result:
-        print(f"Found artist: URL={result[0]}, ID={result[1]}")
+        print(f"Found artist ID: {result}")
     else:
         print("Artist not found.")

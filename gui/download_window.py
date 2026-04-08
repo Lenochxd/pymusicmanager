@@ -62,7 +62,7 @@ class DownloadWindow(QMainWindow):
         self.url_input.setPlaceholderText("Enter URL...")
         
         url_button = QPushButton("Download from URL")
-        url_button.clicked.connect(self._download_from_url)
+        url_button.clicked.connect(self._start_url_download)
         
         url_layout.addWidget(url_label)
         url_layout.addWidget(self.url_input)
@@ -120,28 +120,48 @@ class DownloadWindow(QMainWindow):
         # schedule the coroutine on the background loop
         asyncio.run_coroutine_threadsafe(self._download_from_artist(artist_name), loop)
 
-    async def _download_from_artist(self, artist_name: str):
-        """Async coroutine: run blocking operations in threads and marshal GUI updates to main thread."""
-        # fetch missing library in a thread
-        missing_library = await asyncio.to_thread(get_artist_library, artist_name)
+    def _start_url_download(self):
+        """Grab URL on the GUI thread and schedule the async URL download coroutine."""
+        url = self.url_input.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Input Required", "Please enter a URL.")
+            return
+
+        if not url.startswith("http"):
+            QMessageBox.warning(self, "Invalid URL", "Please enter a valid URL starting with http or https.")
+            return
+
+        loop = DownloadWindow._ensure_event_loop()
+        asyncio.run_coroutine_threadsafe(self._download_from_url(url), loop)
+
+    async def _download_and_emit_tracks(self, missing_library, context_value: str):
+        """Shared flow: announce, add phantom entries, download, then mark as complete."""
         print(f"{missing_library=}")
-        print(f"Found {len(missing_library)} missing tracks for artist '{artist_name}'")
+        print(f"Found {len(missing_library)} missing tracks for artist '{context_value}'")
 
-        # Notify user on main thread
-        QTimer.singleShot(0, partial(QMessageBox.information, self, "Found tracks", f"Found {len(missing_library)} missing tracks for artist: {artist_name}"))
+        QTimer.singleShot(
+            0,
+            partial(
+                QMessageBox.information,
+                self,
+                "Found tracks",
+                f"Found {len(missing_library)} missing tracks for artist: {context_value}"
+            )
+        )
 
-
-        # Add phantom entries first (request GUI to add placeholders)
         for track in missing_library:
             self._emit_add_signal.emit(track, True, True)
 
-        # Download sequentially (offload to threads) and update GUI when each completes
         for track in missing_library:
             print(f"- Downloading {track.get('title')} ({track.get('source')})")
             await asyncio.to_thread(download_song, track)
             print(f"- Download complete: {track.get('title')}")
-            # mark as downloaded (request GUI update)
             self._emit_add_signal.emit(track, False, False)
+
+    async def _download_from_artist(self, artist_name: str):
+        """Download all missing tracks for an artist name."""
+        missing_library = await asyncio.to_thread(get_artist_library, artist_name)
+        await self._download_and_emit_tracks(missing_library, artist_name)
 
     def _on_emit_add(self, track, phantom, pinned):
         """Slot running in the GUI thread to convert track -> add_song.emit."""
@@ -159,12 +179,7 @@ class DownloadWindow(QMainWindow):
         except Exception:
             pass
 
-    def _download_from_url(self):
-        """Placeholder function for downloading from URL"""
-        url = self.url_input.text().strip()
-        if not url:
-            QMessageBox.warning(self, "Input Required", "Please enter a URL.")
-            return
-        # QMessageBox.information(self, "Placeholder", f"Downloading music from URL: {url}")
-        QMessageBox.information(self, "Placeholder", "This is a placeholder, sorry")
-        # TODO: Implement actual download logic here
+    async def _download_from_url(self, url: str):
+        """Download all missing tracks for a URL."""
+        missing_library = await asyncio.to_thread(get_artist_library, None, url)
+        await self._download_and_emit_tracks(missing_library, url)
